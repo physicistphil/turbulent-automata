@@ -10,6 +10,7 @@ import matplotlib as mpl
 mpl.use('tkagg')
 import matplotlib.pyplot as plt
 from pyDOE import lhs
+import time
 
 seed = 84
 np.random.seed(seed)
@@ -27,7 +28,7 @@ def xavier_init(size):
     return tf.Variable(tf.random.truncated_normal([in_dim, out_dim], stddev=xavier_stddev), dtype=tf.float32)
 
 # First, construct & initialize the network:
-layers = [2, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 32, 32, 32, 8, 1] # Layer sizes
+layers = [2, 8, 8, 8, 8, 8, 8, 8, 16, 16, 16, 32, 32, 32, 16, 1] # Layer sizes
 #layers = [2, 20, 20, 20, 20, 20, 20, 20, 20, 1] # Suposedly they did well with this? Doesn't work well for me.
 weights = []
 biases = []
@@ -58,9 +59,7 @@ t_max = 1.
 
 # Define solution evaluation function, and equation satisfaction constraint
 def u(t, x):
-    T_norm = (2.*(t - t_min)/(t_max - t_min)) - 1.
-    X_norm = (2.*(x - x_min)/(x_max - x_min)) - 1.
-    u = forward_pass(tf.stack([T_norm, X_norm], axis=1), weights, biases)
+    u = forward_pass(tf.stack([t, x], axis=1), weights, biases)
     return tf.squeeze(u)
 
 def u_x(t, x):
@@ -112,7 +111,7 @@ initial_loss = tf.reduce_mean(tf.square(u_init_pred - u_init))
 interior_loss = tf.reduce_mean(tf.square(f_pred))
 boundary_loss = tf.reduce_mean(tf.square(u_boundary_xmin_pred) + tf.square(u_boundary_xmax_pred))
 
-loss1 = 10*(initial_loss + boundary_loss)
+loss1 = 100*initial_loss + 10*boundary_loss
 loss2 = 100*initial_loss + interior_loss + 10*boundary_loss
 
 # optimizer = tf.contrib.opt.ScipyOptimizerInterface(loss,
@@ -146,7 +145,7 @@ Y_initial_train = u_0(X_initial_train[1,:])
 
 X_interior_train = lb + (ub - lb)*lhs(2, N_consistency)
 
-num_batches = 5
+num_batches = 1
 X_interior_train_batches = np.array_split(X_interior_train, num_batches)
 
 tf_dict1 = {t_init: X_initial_train[0,:],
@@ -174,45 +173,49 @@ sess = tf.compat.v1.Session()
 init = tf.compat.v1.global_variables_initializer()
 sess.run(init)
 
+start_time = time.time()
+
 print("Pretraining:")
 for i in range(1500):
 	_, loss_num = sess.run([opt1, loss1], feed_dict=tf_dict1)
-	if i % 10 == 0:
-		print("Epoch:{} Loss: {}".format(i, loss_num))
+#	if i % 10 == 0:
+#		print("Epoch:{} Loss: {}".format(i, loss_num))
 
-u_init_pred_result = sess.run(u_init_pred, {x_init:x, t_init:np.zeros(N_x)})
-u_pred_result_1 = sess.run(u_init_pred, {x_init:x, t_init:0.1*np.ones(N_x)})
-u_pred_result_2 = sess.run(u_init_pred, {x_init:x, t_init:0.2*np.ones(N_x)})
-u_pred_result_3 = sess.run(u_init_pred, {x_init:x, t_init:0.3*np.ones(N_x)})
-u_pred_result_4 = sess.run(u_init_pred, {x_init:x, t_init:0.4*np.ones(N_x)})
-u_pred_result_5 = sess.run(u_init_pred, {x_init:x, t_init:0.5*np.ones(N_x)})
+#u_init_pred_result = sess.run(u_init_pred, {x_init:x, t_init:np.zeros(N_x)})
+#u_pred_result_1 = sess.run(u_init_pred, {x_init:x, t_init:0.1*np.ones(N_x)})
+#u_pred_result_2 = sess.run(u_init_pred, {x_init:x, t_init:0.2*np.ones(N_x)})
+#u_pred_result_3 = sess.run(u_init_pred, {x_init:x, t_init:0.3*np.ones(N_x)})
+#u_pred_result_4 = sess.run(u_init_pred, {x_init:x, t_init:0.4*np.ones(N_x)})
+#u_pred_result_5 = sess.run(u_init_pred, {x_init:x, t_init:0.5*np.ones(N_x)})
 
-plt.plot(x, u_init_pred_result, label="NN")
-plt.plot(x, u_0(x), label="Initial Condition")
-plt.plot(x, u_pred_result_1, label="NN at t=0.1")
-plt.plot(x, u_pred_result_2, label="NN at t=0.2")
-plt.plot(x, u_pred_result_3, label="NN at t=0.3")
-plt.plot(x, u_pred_result_4, label="NN at t=0.4")
-plt.plot(x, u_pred_result_5, label="NN at t=0.5")
-plt.legend()
-plt.show()
+#plt.plot(x, u_init_pred_result, label="NN")
+#plt.plot(x, u_0(x), label="Initial Condition")
+#plt.plot(x, u_pred_result_1, label="NN at t=0.1")
+#plt.plot(x, u_pred_result_2, label="NN at t=0.2")
+#plt.plot(x, u_pred_result_3, label="NN at t=0.3")
+#plt.plot(x, u_pred_result_4, label="NN at t=0.4")
+#plt.plot(x, u_pred_result_5, label="NN at t=0.5")
+#plt.legend()
+#plt.show()
 
 print("Training:")
-for i in range(0, 10000//num_batches):
+for i in range(0, 100//num_batches):
     loss_num = 0.
     # Iterate over mini-batches
     for j in range(num_batches):
         _, temp_loss_num = sess.run([opt2, loss2], feed_dict=tf_dict2[j])
         loss_num += temp_loss_num
     #
-    if i % 10 == 0:
-        print("Epoch:{} Loss: {}".format(i, loss_num/num_batches))
-        if loss_num/num_batches < 0.01:
-        	break
+#    if i % 10 == 0:
+#        print("Epoch:{} Loss: {}".format(i, loss_num/num_batches))
+#        if loss_num/num_batches < 0.01:
+#        	break
     # optimizer.minimize(sess, feed_dict=tf_dict,
     #                    fetches=[loss, interior_loss, initial_loss, boundary_loss])
 
+end_time = time.time()
 
+print(end_time - start_time)
 # Display
 
 # Do a simple forward pass
