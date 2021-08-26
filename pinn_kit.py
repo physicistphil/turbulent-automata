@@ -6,6 +6,9 @@ from pyDOE import lhs
 import numpy as np
 import sympy as sp
 
+import typing
+from typing import Dict, Tuple, Callable
+
 """PINN Kit contains a suite of helpful classes and functions for building & training
 models in the PINN method to solve differential equations. The goal is to save time
 and effort, and make rapid iteration & experimentation possible. In particular, the
@@ -45,7 +48,10 @@ To be efficient enough to improve upon traditional PDE solution methods, PINNs n
 to use different architectures biased toward their problem type. Many archetectures
 have been proposed, and this module contains implementations of some that we've tried."""
 
-class InputRemap():
+SymbolDefs = Dict[str, torch.Size]
+SymbolValues = Dict[str, torch.tensor]
+
+class InputRemap:
     """Defines a map between input coordinates and the model input.
     This is useful for inducing a natural topology that can allow automatic
     boundary condition solution.
@@ -54,7 +60,7 @@ class InputRemap():
     coords_in : dict of coordinate names and tensor sizes
     mapping_function : A function that takes an input coordinate dictionary and outputs a tuple of tensors
     coords_out : tuple with the output tensor sizes"""
-    def __init__(self, coords_in, mapping_function):
+    def __init__(self, coords_in: SymbolDefs, mapping_function: Callable[[SymbolValues], Tuple[torch.tensor, ...]]) -> None:
         self.coords_in = coords_in
         self.mapping_function = mapping_function
         test_input = {}
@@ -63,20 +69,20 @@ class InputRemap():
         test_output = mapping_function(test_input)
         self.coords_out = tuple(out_coord[0, ...].size() for out_coord in test_output)
 
-    def __call__(coords):
+    def __call__(self, coords: SymbolValues) -> Tuple[torch.tensor, ...]:
         return self.mapping_function(coords)
 
-class OutputRemap():
+class OutputRemap:
     """Defines a coordinate-dependent map between model output and the solution space.
     This is useful for imposing a solution ansatz that automatically satisfies boundary
     or junction conditions.
-    
+
     Parameters:
     coords_in : dict of coordinate names and tensor sizes
     vars_in : tuple of the sizes of the tensors output by the model
     mapping_function : A function that takes an input coordinate dictionary and tuple of tensors, and outputs a dictionary of output variable tensors
     vars_out : dict of output variable tensor sizes"""
-    def __init__(self, coords_in, vars_in, mapping_function):
+    def __init__(self, coords_in: SymbolDefs, vars_in: Tuple[torch.Size, ...], mapping_function: Callable[[SymbolValues, Tuple[torch.tensor, ...]], SymbolValues]) -> None:
         self.coords_in = coords_in
         self.vars_in = vars_in
         self.mapping_function = mapping_function
@@ -86,10 +92,10 @@ class OutputRemap():
         test_var_input = tuple((torch.zeros(size))[None, ...] for size in vars_in)
         test_output = mapping_function(test_coord_input, test_var_input)
         self.vars_out = {}
-        for name, output in test_output:
+        for name, output in test_output.items():
             self.vars_out[name] = output[0, ...].size()
 
-    def __call__(coords, variables):
+    def __call__(self, coords: SymbolValues, variables: Tuple[torch.tensor, ...]) -> SymbolValues:
         return self.mapping_function(coords, variables)
 
 class Solution(torch.nn.Module):
@@ -106,9 +112,9 @@ class Solution(torch.nn.Module):
        maps to these models, and informs the models of the number and
        size of input and output tensors so that archetectures can be
        defined in a relatively problem-independent way."""
-    def __init__(self, input_map, output_map):
+    def __init__(self, input_map: InputRemap, output_map: OutputRemap) -> None:
         """Constructor
-        
+
         input_map: An InputRemap object connecting named coordinates to model inputs
         output_map: An OutputRemap object connecting model outputs to named output varaibles"""
         super(Solution, self).__init__()
@@ -117,8 +123,8 @@ class Solution(torch.nn.Module):
         self.setup_model(self.in_map.coords_out, self.out_map.vars_in)
 
     # do I have to declare the 'setup_model' function yet? Or the model function?
-    
-    def forward(self, coords): 
+
+    def forward(self, coords: SymbolValues) -> SymbolValues: 
         model_input = self.in_map(coords)
         model_output = self.model(model_input)
         return self.out_map(coords, model_output)
@@ -164,12 +170,11 @@ class ClassicPINN(Solution):
             input_vect = torch.cat(coords, 1)
             return torch.split(u(input_vect), output_sizes, dim=1)
         self.model = nn_eval
-         
-        
+
+
 
 # For now, hard-code the co-location loss. It should take an argument for co-location weights, since some training methods use these (it's basically another NN... should it be seperate?)
 
 # For now, implement the standard PINN loss and PINN boundary loss functions
 
 # Finally, try to get the whole sympy -> equation loss thing going!
-       

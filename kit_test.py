@@ -14,6 +14,25 @@ variables = {'u' : (1,)}
 
 in_map = InputRemap(coords, lambda crds: (crds['t'], crds['x']))
 
+out_map = OutputRemap(coords, (torch.Size((1,)),), lambda crds, vrs: {'v' : vrs[0]})
+
+x_min = -1.
+x_max = 1.
+
+t_min = 0.
+t_max = 1.
+
+X = torch.linspace(x_min, x_max, 100).reshape(-1, 1)
+T = torch.linspace(t_min, t_max, 100).reshape(-1, 1)
+
+coords_in = {'x' : X, 't' : T}
+
+model = ClassicPINN(in_map, out_map)
+
+print(model)
+
+print(model(coords_in))
+
 #def f(t, x):
 #    t.requires_grad = True # Tell autograd to include t
 #    x.requires_grad = True # Tell autograd to include x
