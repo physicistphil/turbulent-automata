@@ -50,6 +50,7 @@ To be efficient enough to improve upon traditional PDE solution methods, PINNs n
 to use different architectures biased toward their problem type. Many archetectures
 have been proposed, and this module contains implementations of some that we've tried."""
 
+# Custom type aliases for type hinting
 SymbolDefs = Dict[str, torch.Size]
 SymbolValues = Dict[str, torch.tensor]
 
@@ -58,11 +59,19 @@ class InputRemap:
     This is useful for inducing a natural topology that can allow automatic
     boundary condition solution.
 
-    Parameters:
-    coords_in : dict of coordinate names and tensor sizes
-    mapping_function : A function that takes an input coordinate dictionary and outputs a tuple of tensors
-    coords_out : tuple with the output tensor sizes"""
+    :ivar coords_in: A set of named coordinates and their tensor sizes.
+    :type coords_in: dict of coordinate names, torch.Size objects
+    :ivar mapping_function: A function that remaps input coordinates to a set of tensors.
+    :type mapping_function: Function taking a dict of torch.tensor, returning a tuple of torch.tensor
+    :ivar coords_out: A set of unnamed output tensor sizes
+    :type coords_out: tuple of torch.Size"""
     def __init__(self, coords_in: SymbolDefs, mapping_function: Callable[[SymbolValues], Tuple[torch.tensor, ...]]) -> None:
+        """Constructor.
+
+        :param coords_in: A set of named coordinates and their tensor sizes.
+        :type coords_in: dict of coordinate names, torch.Size objects
+        :param mapping_function: A function that remaps input coordinates to a set of tensors.
+        :type mapping_function: Function taking a dict of torch.tensor, returning a tuple of torch.tensor"""
         self.coords_in = coords_in
         self.mapping_function = mapping_function
         test_input = {}
@@ -72,6 +81,7 @@ class InputRemap:
         self.coords_out = tuple(out_coord[0, ...].size() for out_coord in test_output)
 
     def __call__(self, coords: SymbolValues) -> Tuple[torch.tensor, ...]:
+        """Apply the remapping to a set of symbols with tensor values, provided by a dictionary."""
         return self.mapping_function(coords)
 
 class OutputRemap:
@@ -79,12 +89,23 @@ class OutputRemap:
     This is useful for imposing a solution ansatz that automatically satisfies boundary
     or junction conditions.
 
-    Parameters:
-    coords_in : dict of coordinate names and tensor sizes
-    vars_in : tuple of the sizes of the tensors output by the model
-    mapping_function : A function that takes an input coordinate dictionary and tuple of tensors, and outputs a dictionary of output variable tensors
-    vars_out : dict of output variable tensor sizes"""
+    :ivar coords_in: A set of named coordinates and their tensor sizes.
+    :type coords_in: dict of coordinate names, torch.Size objects
+    :ivar vars_in: The sizes of the tensors that the remap takes as input.
+    :type vars_in: tuple of torch.Size
+    :ivar mapping_function: A function that remaps input tensors to a collection of named tensor-valued output variables in a manner that may be dependent on the values of the input coordinates.
+    :type mapping_function: Function taking two dicts of torch.tensor (coordinates and model output), returning a tuple of torch.tensor
+    :ivar vars_out: A collection of names and sizes for the output tensors of the map.
+    :type vars_out: dict of tensor.Size"""
     def __init__(self, coords_in: SymbolDefs, vars_in: Tuple[torch.Size, ...], mapping_function: Callable[[SymbolValues, Tuple[torch.tensor, ...]], SymbolValues]) -> None:
+        """Constructor.
+
+        :param coords_in: A set of named coordinates and their tensor sizes.
+        :type coords_in: dict of coordinate names, torch.Size objects
+        :param vars_in: The sizes of the tensors that the remap takes as input.
+        :type vars_in: tuple of torch.Size
+        :param mapping_function: A function that remaps input tensors to a collection of named tensor-valued output variables in a manner that may be dependent on the values of the input coordinates.
+        :type mapping_function: Function taking two dicts of torch.tensor (coordinates and model output), returning a tuple of torch.tensor"""
         self.coords_in = coords_in
         self.vars_in = vars_in
         self.mapping_function = mapping_function
@@ -98,6 +119,7 @@ class OutputRemap:
             self.vars_out[name] = output[0, ...].size()
 
     def __call__(self, coords: SymbolValues, variables: Tuple[torch.tensor, ...]) -> SymbolValues:
+        """Apply the remap given a dictionary of named tensor coordinates and a tuple of tensors (presumably the model output)."""
         return self.mapping_function(coords, variables)
 
 class Solution(torch.nn.Module, ABC):
@@ -113,12 +135,19 @@ class Solution(torch.nn.Module, ABC):
        class just makes it possible to easily attach input and output
        maps to these models, and informs the models of the number and
        size of input and output tensors so that archetectures can be
-       defined in a relatively problem-independent way."""
-    def __init__(self, input_map: InputRemap, output_map: OutputRemap) -> None:
-        """Constructor
+       defined in a relatively problem-independent way.
 
-        input_map: An InputRemap object connecting named coordinates to model inputs
-        output_map: An OutputRemap object connecting model outputs to named output varaibles"""
+       :ivar in_map: A map from the named coordinates to the model input tensors.
+       :type in_map: InputRemap
+       :ivar out_map: A map from the model output tensors to the named output variable tensors.
+       :type out_map: OutputRemap"""
+    def __init__(self, input_map: InputRemap, output_map: OutputRemap) -> None:
+        """Constructor.
+
+       :param input_map: A map from the named coordinates to the model input tensors.
+       :type input_map: InputRemap
+       :param output_map: A map from the model output tensors to the named output variable tensors.
+       :type output_map: OutputRemap"""
         super(Solution, self).__init__()
         self.in_map = input_map
         self.out_map = output_map
@@ -126,6 +155,14 @@ class Solution(torch.nn.Module, ABC):
 
     @abstractmethod
     def setup_model(self, model_inputs: Tuple[torch.Size, ...], model_outputs: Tuple[torch.Size, ...]) -> None:
+        """The setup routine for the central trainable model of the solution.
+        Given a specification of the order and sizes of the tensors output by the in_map and expected by the out_map, a model should be constructed that connects to these inputs and outputs.
+        This routine defines the architecture that represents the solution, so it is left unimplemented on this abstract base class, and can be overloaded in any subclass to define general PINN architectures.
+
+        :param model_inputs: The sizes of the collection of tensors that will be fed in to the model.
+        :type model_inputs: tuple of torch.Size
+        :param model_outputs: The sizes of the collection of tensors that the model is expected to produce.
+        :type model_outputs: tuple of torch.Size"""
         raise NotImplementedError
 
     def forward(self, coords: SymbolValues) -> SymbolValues: 
