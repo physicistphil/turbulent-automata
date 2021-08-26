@@ -9,6 +9,8 @@ import sympy as sp
 import typing
 from typing import Dict, Tuple, Callable
 
+from abc import ABC, abstractmethod
+
 """PINN Kit contains a suite of helpful classes and functions for building & training
 models in the PINN method to solve differential equations. The goal is to save time
 and effort, and make rapid iteration & experimentation possible. In particular, the
@@ -98,7 +100,7 @@ class OutputRemap:
     def __call__(self, coords: SymbolValues, variables: Tuple[torch.tensor, ...]) -> SymbolValues:
         return self.mapping_function(coords, variables)
 
-class Solution(torch.nn.Module):
+class Solution(torch.nn.Module, ABC):
     """The base class of all equation solutions.
        Contains an input map from named coordinates to model inputs,
        a model of some sort, and an output map from the model output
@@ -122,7 +124,9 @@ class Solution(torch.nn.Module):
         self.out_map = output_map
         self.setup_model(self.in_map.coords_out, self.out_map.vars_in)
 
-    # do I have to declare the 'setup_model' function yet? Or the model function?
+    @abstractmethod
+    def setup_model(self, model_inputs: Tuple[torch.Size, ...], model_outputs: Tuple[torch.Size, ...]) -> None:
+        raise NotImplementedError
 
     def forward(self, coords: SymbolValues) -> SymbolValues: 
         model_input = self.in_map(coords)
