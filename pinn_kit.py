@@ -170,6 +170,42 @@ class Solution(torch.nn.Module, ABC):
         model_output = self.model(model_input)
         return self.out_map(coords, model_output)
 
+
+class Equation:
+    """This class represents equations. Every equation has a symbolic form and a Solution to which it applies.
+    Perhapse confusingly, in this case the 'solution' may not actually solve the equation, but it should after
+    training if the solution was sufficiently trained using the provided f() function.
+    The function f() takes in coordinate values, evaluates the solution on them to get variable values, and
+    uses these tensors and their derivatives to evaluate the sum of all terms of the equation. When the equation
+    is satisfied, all the components of this sum should be zero, but the exact manner by which this is enforced is
+    left up to the training and loss functions that call f().
+
+    :param solution: The solution function that should, after training, satisfy this equation.
+    :type solution: A subclass of Solution
+    :param symbolic_expression: The sum of all terms in the equation, which should equal zero when satisfied.
+    :type symbolic_expression: A sympy Expr object"""
+    def __init__(self, solution: Solution, equation: sp.Expr) -> None:
+        """Constructor.
+
+        :ivar solution: A trainable solution model. Its named inputs and outputs must include all variables used in this equation.
+        :type solution: A subclass of Solution
+        :ivar equation: A symbolic expression of the sum of all terms in the equation. Variable symbol names must match those used by the solution.
+        :type equation: A sympy Expr object"""
+        self.solution = solution
+        self.symbolic_expression = equation
+
+        # To-do: check that the variables in the equation are all accounted for in the solution
+        # To-do: define a custom 'torch expression' type that has .func and .args methods just like sympy Expr
+        # To-do: define a dictionary of torch functions indexed by the corresponding sympy type. The derivative ones in particular will need to be custom implementations using autograd
+        # To-do: in the constructor, append to a copy of this dictionary entries that connect the names of the coordinates and variables to functions that return local tensor variables. This way, we only have to hash the coordinates once, and apply the model once, and those things can then be stored locally so we avoid re-hashing or re-evaluation of the model during the evaluation of the torch expression tree that will happen when f() is called.
+        # To-do: Use this dictionary to walk the symbolic equation expression tree and build a corresponding torch expression tree, whith the custom classes.
+        # When f is called, simply assign the coordinates to the right internal variables, evaluate the model and assign its outputs to the right internal variables, and execute the torch expression tree to produce an output.
+
+# To-do: implement an 'Action' class in the vein of Equation that evaluates a lagrangian density. It can maybe implement some integration methods, certainly monte carlo, but also methods that assume structured samples and/or take advantage of access to derivatives or model evaluations.
+
+# It it's not possible to train a model to output the action integral directly, because you need access to the internal solution values to ensure that the action obeyed the right formula. The best that could be done is to have a solution model, and a seperate NN that integrates, but training a net to integrate seems risky and unlikely to provide a speedup over standard methods, which would be necessary anyway to evaluate the training, so I see no benefit to such an architecture at present.
+# However, what *could* be done is to define a model that produces integrated fluxes for specific equations where such a formulation is possible. This could be used in conjunction with input/output remap based schemes to guarantee global conservation of certain quantites, which may be useful to avoid drifting of bulk quantities during training. Unfortunately, in a continuous domain "local flux conservation" has no distinct meaning from exact solution of the equations everywhere, so this would be a weaker constraint than that of finite-volume flux conservative methods.
+
 ### Model Implementations ###
 
 class ClassicPINN(Solution):
@@ -211,7 +247,6 @@ class ClassicPINN(Solution):
             input_vect = torch.cat(coords, 1)
             return torch.split(u(input_vect), output_sizes, dim=1)
         self.model = nn_eval
-
 
 
 # For now, hard-code the co-location loss. It should take an argument for co-location weights, since some training methods use these (it's basically another NN... should it be seperate?)
