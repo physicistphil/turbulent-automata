@@ -216,6 +216,10 @@ class ClassicPINN(Solution):
 
 # For now, hard-code the co-location loss. It should take an argument for co-location weights, since some training methods use these (it's basically another NN... should it be seperate?)
 
+def ColocationLoss(f: Callable[[SymbolValues], torch.tensor], points: SymbolValues, weights: torch.tensor) -> float:
+    return torch.mean(torch.square(weights*f(points)))
+
+
 # For now, implement the standard PINN loss and PINN boundary loss functions
 
 # Finally, try to get the whole sympy -> equation loss thing going!

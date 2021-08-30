@@ -10,11 +10,10 @@ import time
 from pinn_kit import *
 
 coords = {'x' : (1,), 't' : (1,)}
-variables = {'u' : (1,)}
 
 in_map = InputRemap(coords, lambda crds: (crds['t'], crds['x']))
 
-out_map = OutputRemap(coords, (torch.Size((1,)),), lambda crds, vrs: {'v' : vrs[0]})
+out_map = OutputRemap(coords, (torch.Size((1,)),), lambda crds, vrs: {'u' : vrs[0]})
 
 x_min = -1.
 x_max = 1.
@@ -33,20 +32,24 @@ print(model)
 
 print(model(coords_in))
 
-#def f(t, x):
-#    t.requires_grad = True # Tell autograd to include t
-#    x.requires_grad = True # Tell autograd to include x
-#    model_input = torch.cat((t, x), 1) # Temporary. Eventually this should always be done by the model, since the model may want to keep variables on seperate 'trunks'
-#    u_val = u(model_input)
-#    #print(u_val)
-#    u_x = torch.autograd.grad(u_val, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
-#    #print(u_x)
-#    u_t = torch.autograd.grad(u_val, t, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
-#    #print(u_t)
-#    u_xx = torch.autograd.grad(u_x, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_x))[0]
-#    #print(u_xx)
-#    # Might need to add some more arguments if u isn't scalar...
-#    return u_t + u_val*u_x - (0.01/3.14)*u_xx # Not complete without the u_t term, but good enough for a quick test
+def f(coord_input):
+    x = coord_input['x']
+    t = coord_input['t']
+    t.requires_grad = True # Tell autograd to include t
+    x.requires_grad = True # Tell autograd to include x
+    u_val = model({'x' : x, 't' : t})['u']
+    #print(u_val)
+    u_x = torch.autograd.grad(u_val, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
+    #print(u_x)
+    u_t = torch.autograd.grad(u_val, t, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
+    #print(u_t)
+    u_xx = torch.autograd.grad(u_x, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_x))[0]
+    #print(u_xx)
+    # Might need to add some more arguments if u isn't scalar...
+    return u_t + u_val*u_x - (0.01/3.14)*u_xx
+
+print(ColocationLoss(f, coords_in, torch.ones_like(coords_in['x'])))
+
 #
 #t_min = 0.
 #t_max = 1.
