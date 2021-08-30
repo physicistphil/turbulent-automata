@@ -38,13 +38,9 @@ def f(coord_input):
     t.requires_grad = True # Tell autograd to include t
     x.requires_grad = True # Tell autograd to include x
     u_val = model({'x' : x, 't' : t})['u']
-    #print(u_val)
     u_x = torch.autograd.grad(u_val, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
-    #print(u_x)
     u_t = torch.autograd.grad(u_val, t, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_val))[0]
-    #print(u_t)
     u_xx = torch.autograd.grad(u_x, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_x))[0]
-    #print(u_xx)
     # Might need to add some more arguments if u isn't scalar...
     return u_t + u_val*u_x - (0.01/3.14)*u_xx
 
