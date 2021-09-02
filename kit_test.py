@@ -7,6 +7,8 @@ import matplotlib as mpl
 import matplotlib.pyplot as plt
 import time
 
+import sympy as sp
+
 from pinn_kit import *
 
 coords = {'x' : (1,), 't' : (1,)}
@@ -45,6 +47,18 @@ def f(coord_input):
     return u_t + u_val*u_x - (0.01/3.14)*u_xx
 
 print(ColocationLoss(f, coords_in, torch.ones_like(coords_in['x'])))
+
+x_sym, t_sym, u_sym = sp.symbols("x t u")
+
+#burgers = Equation(model, sp.deriv(u_sym, t_sym) + u*sp.deriv(u_sym, x_sym) - (0.01/3.14)*sp.deriv(u_sym, x_sym, 2))
+
+algebraic_test = Equation(model, u_sym - sp.sin(x_sym)*sp.cos(t_sym))
+
+print(algebraic_test)
+
+print(algebraic_test.symbolic_expression)
+
+print(algebraic_test.f(coords_in))
 
 #
 #t_min = 0.

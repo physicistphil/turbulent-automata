@@ -6,6 +6,8 @@ from pyDOE import lhs
 import numpy as np
 import sympy as sp
 
+import torch_printer
+
 import typing
 from typing import Dict, Tuple, Callable
 
@@ -81,7 +83,13 @@ class InputRemap:
         self.coords_out = tuple(out_coord[0, ...].size() for out_coord in test_output)
 
     def __call__(self, coords: SymbolValues) -> Tuple[torch.tensor, ...]:
-        """Apply the remapping to a set of symbols with tensor values, provided by a dictionary."""
+        """Apply the remapping.
+
+        :param coords: A set of named coordinate values.
+        :type coords: A dict of torch.tensor
+
+        :returns: A collection of unnamed tensors.
+        :rtype: A tuple of torch.tensor"""
         return self.mapping_function(coords)
 
 class OutputRemap:
@@ -119,7 +127,15 @@ class OutputRemap:
             self.vars_out[name] = output[0, ...].size()
 
     def __call__(self, coords: SymbolValues, variables: Tuple[torch.tensor, ...]) -> SymbolValues:
-        """Apply the remap given a dictionary of named tensor coordinates and a tuple of tensors (presumably the model output)."""
+        """Apply the remap.
+
+        :param coords: A set of named coordinates.
+        :type coords: A dict of torch.tensor
+        :param variables: A collection of unnamed variable values (presumably the output of the nn model).
+        :type variables: A tuple of torch.tensor
+
+        :returns: A set of named variable values.
+        :rtype: A dict of torch.tensor"""
         return self.mapping_function(coords, variables)
 
 class Solution(torch.nn.Module, ABC):
@@ -165,11 +181,17 @@ class Solution(torch.nn.Module, ABC):
         :type model_outputs: tuple of torch.Size"""
         raise NotImplementedError
 
-    def forward(self, coords: SymbolValues) -> SymbolValues: 
+    def forward(self, coords: SymbolValues) -> SymbolValues:
+        """Evaluate forward pass of the model.
+
+        :param coords: A set of named input coordinates.
+        :type coords: A dictionary of torch.tensor
+
+        :returns: A set of named output variable values.
+        :rtype: A dictionary of torch.tensor"""
         model_input = self.in_map(coords)
         model_output = self.model(model_input)
         return self.out_map(coords, model_output)
-
 
 class Equation:
     """This class represents equations. Every equation has a symbolic form and a Solution to which it applies.
@@ -180,30 +202,55 @@ class Equation:
     is satisfied, all the components of this sum should be zero, but the exact manner by which this is enforced is
     left up to the training and loss functions that call f().
 
-    :param solution: The solution function that should, after training, satisfy this equation.
+    :ivar solution: The solution function that should, after training, satisfy this equation.
     :type solution: A subclass of Solution
-    :param symbolic_expression: The sum of all terms in the equation, which should equal zero when satisfied.
+    :ivar symbolic_expression: The sum of all terms in the equation, which should equal zero when satisfied.
     :type symbolic_expression: A sympy Expr object"""
+
+    # Define a dictionary of torch functions indexed by the corresponding sympy type.
+    # The derivative ones in particular may need to be custom implementations using autograd
+    # Note: there is a nearly completed PR in sympy where native support for torch has been implemented.
+    # as soon as that becomes part of sympy proper, it would make sense to update this project to use that
+    # feature, and reduce the dictionary here to custom translations
+    torch_default_mapping = {} # This can contain special mappings not included in the module map
+    exec('import torch', {}, torch_default_mapping)
+    torch_translations = {} # For special translations where the function name is different in sympy and torch
+    # Apply translations. Keys should be sympy names of functions, values should be the torch names
+    for sympyname, translation in torch_translations.items():
+        torch_default_mapping[sympyname] = torch_default_mapping[translation]
+
+
     def __init__(self, solution: Solution, equation: sp.Expr) -> None:
         """Constructor.
 
-        :ivar solution: A trainable solution model. Its named inputs and outputs must include all variables used in this equation.
+        :param solution: A trainable solution model. Its named inputs and outputs must include all variables used in this equation.
         :type solution: A subclass of Solution
-        :ivar equation: A symbolic expression of the sum of all terms in the equation. Variable symbol names must match those used by the solution.
+        :param equation: A symbolic expression of the sum of all terms in the equation. Variable symbol names must match those used by the solution.
         :type equation: A sympy Expr object"""
         self.solution = solution
         self.symbolic_expression = equation
+        # Pull the coordinates and variables out of solution
+        self._coords = self.solution.in_map.coords_in.keys()
+        self._variables = self.solution.out_map.vars_out.keys()
+        # To-do: we should check that the variables in the equation are all accounted for by the coordinates and variables in the solution, otherwise we'll get a confusing error.
+        print(self.torch_default_mapping)
+        self._eq_eval = sp.lambdify((list(map(sp.Symbol, self._coords)), list(map(sp.Symbol, self._variables))), self.symbolic_expression, modules=[self.torch_default_mapping,], printer=torch_printer.TorchPrinter())
 
-        # To-do: check that the variables in the equation are all accounted for in the solution
-        # To-do: define a custom 'torch expression' type that has .func and .args methods just like sympy Expr
-        # To-do: define a dictionary of torch functions indexed by the corresponding sympy type. The derivative ones in particular will need to be custom implementations using autograd
-        # To-do: in the constructor, append to a copy of this dictionary entries that connect the names of the coordinates and variables to functions that return local tensor variables. This way, we only have to hash the coordinates once, and apply the model once, and those things can then be stored locally so we avoid re-hashing or re-evaluation of the model during the evaluation of the torch expression tree that will happen when f() is called.
-        # To-do: Use this dictionary to walk the symbolic equation expression tree and build a corresponding torch expression tree, whith the custom classes.
-        # When f is called, simply assign the coordinates to the right internal variables, evaluate the model and assign its outputs to the right internal variables, and execute the torch expression tree to produce an output.
+    # Evaluate the model at the given coordinates, pass the coordinates and variables into the equation expression, and output the result
+    def f(self, coords: SymbolValues) -> torch.tensor:
+        """Evaluate the sum of the equation terms at the given colocation points.
 
-# To-do: implement an 'Action' class in the vein of Equation that evaluates a lagrangian density. It can maybe implement some integration methods, certainly monte carlo, but also methods that assume structured samples and/or take advantage of access to derivatives or model evaluations.
+        :param coords: A set of named colocation coordinates.
+        :type coords: A dict of torch.tensor
 
-# It it's not possible to train a model to output the action integral directly, because you need access to the internal solution values to ensure that the action obeyed the right formula. The best that could be done is to have a solution model, and a seperate NN that integrates, but training a net to integrate seems risky and unlikely to provide a speedup over standard methods, which would be necessary anyway to evaluate the training, so I see no benefit to such an architecture at present.
+        :returns: A tensor of equation values at each point (which may themselves be tensors!)
+        :rtype: torch.tensor"""
+        variables = self.solution(coords)
+        return self._eq_eval([coords[name] for name in self._coords], [variables[name] for name in self._variables])
+
+# To-do: implement an 'Action' class in the vein of Equation that evaluates a lagrangian density. Unlike for equations, re-weighting the lagrangain messes up the physics, so the Action class should also be in charge of integration, and can implement an array of integration methods, certainly monte carlo, but also methods that assume structured samples and/or take advantage of access to derivatives or repeated model evaluations. Note: for theories like GR the Action class should be set up to output L * sqrt(-g), so the module may just assume a standard coordinate volume element for everything.
+
+# It's not possible to train a model to output the action integral directly, because you need access to the internal solution values to ensure that the action obeyed the right formula. The best that could be done is to have a solution model, and a seperate NN that integrates, but training a net to integrate seems risky and unlikely to provide a speedup over standard methods, which would be necessary anyway to evaluate the training, so I see no benefit to such an architecture at present.
 # However, what *could* be done is to define a model that produces integrated fluxes for specific equations where such a formulation is possible. This could be used in conjunction with input/output remap based schemes to guarantee global conservation of certain quantites, which may be useful to avoid drifting of bulk quantities during training. Unfortunately, in a continuous domain "local flux conservation" has no distinct meaning from exact solution of the equations everywhere, so this would be a weaker constraint than that of finite-volume flux conservative methods.
 
 ### Model Implementations ###
@@ -249,12 +296,6 @@ class ClassicPINN(Solution):
         self.model = nn_eval
 
 
-# For now, hard-code the co-location loss. It should take an argument for co-location weights, since some training methods use these (it's basically another NN... should it be seperate?)
-
 def ColocationLoss(f: Callable[[SymbolValues], torch.tensor], points: SymbolValues, weights: torch.tensor) -> float:
-    return torch.mean(torch.square(weights*f(points)))
+    return torch.mean(torch.square(weights*torch.flatten(f(points))))
 
-
-# For now, implement the standard PINN loss and PINN boundary loss functions
-
-# Finally, try to get the whole sympy -> equation loss thing going!
