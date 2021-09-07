@@ -233,7 +233,6 @@ class Equation:
         self._coords = self.solution.in_map.coords_in.keys()
         self._variables = self.solution.out_map.vars_out.keys()
         # To-do: we should check that the variables in the equation are all accounted for by the coordinates and variables in the solution, otherwise we'll get a confusing error.
-        print(self.torch_default_mapping)
         self._eq_eval = sp.lambdify((list(map(sp.Symbol, self._coords)), list(map(sp.Symbol, self._variables))), self.symbolic_expression, modules=[self.torch_default_mapping,], printer=torch_printer.TorchPrinter())
 
     # Evaluate the model at the given coordinates, pass the coordinates and variables into the equation expression, and output the result
