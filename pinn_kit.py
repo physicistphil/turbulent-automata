@@ -7,7 +7,15 @@ from pyDOE import lhs
 import numpy as np
 import sympy as sp
 
+# Eventually, this will be supported by the main fork of sympy, and
+# this line can be replaced with import sympy.printers.torch_printer
+# or something like that
 import torch_printer
+
+# I need to import this for the re-implementation of _print_Derivative
+# in the ModifiedTorchPrinter class defined below.
+from sympy.core.compatibility import Iterable
+
 
 import typing
 from typing import Dict, Tuple, Callable
@@ -217,6 +225,31 @@ class Solution(torch.nn.Module, ABC):
         model_output = self.model(model_input)
         return self.out_map(coords, model_output)
 
+# Since I want to be able to use the native support for pytorch once it is added to
+# sympy, I'm making a subclass of TorchPrinter rather than modifying it directly.
+# This way, when native support is added, this code can be used with it.
+class ModifiedTorchPrinter(torch_printer.TorchPrinter):
+    def _print_Derivative(self, expr):
+        variables = expr.variables
+        if any(isinstance(i, Iterable) for i in variables):
+            raise NotImplementedError("derivation by multiple variables is not supported")
+        def unfold(expr, args):
+            if not args:
+                return self._print(expr)
+            output_vals = unfold(expr, args[:-1])
+            # Note: this will not work for vector-valued functions, so I'll probably be revisiting this before long...
+            # In such cases, we'd really need to make a custom mathematical function in sympy, that can be translated
+            # into the appropriate set of calls to torch.autograd.grad. Alternatively, it might be wiser to give each
+            # tensor component a string name, so that the index manipulation can be taken care of by sympy, since we're
+            # not going to have more than a handful of components anyway. This is effectively what I'll do for now.
+            return "%s(%s, %s, grad_outputs=torch.ones_like(%s), retain_graph=True, create_graph=True)[0]" % (
+                    self._module_format("torch.autograd.grad"),
+                    output_vals,
+                    self._print(args[-1]),
+                    output_vals,
+                )
+        return unfold(expr.expr, variables)
+
 
 class Equation:
     """This class represents equations. Every equation has a symbolic form and a Solution to which it applies.
@@ -267,7 +300,7 @@ class Equation:
             modules=[
                 self.torch_default_mapping,
             ],
-            printer=torch_printer.TorchPrinter(),
+            printer=ModifiedTorchPrinter(),
         )
 
     # Evaluate the model at the given coordinates, pass the coordinates and variables into the equation expression, and output the result
@@ -279,10 +312,12 @@ class Equation:
 
         :returns: A tensor of equation values at each point (which may themselves be tensors!)
         :rtype: torch.tensor"""
+        for coord in coords.values():
+            coord.requires_grad = True
         variables = self.solution(coords)
         return self._eq_eval(
-            [torch.squeeze(coords[name]) for name in self._coords],
-            [torch.squeeze(variables[name]) for name in self._variables],
+            [coords[name] for name in self._coords],
+            [variables[name] for name in self._variables],
         )
 
 
