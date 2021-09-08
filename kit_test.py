@@ -61,7 +61,6 @@ def f(coord_input):
     # Might need to add some more arguments if u isn't scalar...
     return u_t + u_val * u_x - (0.01 / 3.14) * u_xx
 
-
 print(ColocationLoss(f, coords_in, torch.ones_like(coords_in["x"])))
 
 x_sym, t_sym, u_sym = sp.symbols("x t u")
