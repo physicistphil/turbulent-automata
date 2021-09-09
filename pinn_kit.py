@@ -236,17 +236,27 @@ class ModifiedTorchPrinter(torch_printer.TorchPrinter):
         def unfold(expr, args):
             if not args:
                 return self._print(expr)
-            output_vals = unfold(expr, args[:-1])
             # Note: this will not work for vector-valued functions, so I'll probably be revisiting this before long...
             # In such cases, we'd really need to make a custom mathematical function in sympy, that can be translated
             # into the appropriate set of calls to torch.autograd.grad. Alternatively, it might be wiser to give each
             # tensor component a string name, so that the index manipulation can be taken care of by sympy, since we're
             # not going to have more than a handful of components anyway. This is effectively what I'll do for now.
-            return "%s(%s, %s, grad_outputs=torch.ones_like(%s), retain_graph=True, create_graph=True)[0]" % (
+            #
+            # Note 2: The lambda function is important for efficiency: if we just insert the result of unfold into the
+            # string twice, the code that gets evaluated ends up re-calculating the whole expression tree over again
+            # just to produce the ones_like array. Because this happens at each level of the tree, it is actually an
+            # astoundingly effective way to explode expression complexity for 2nd order and higher derivatives. By
+            # defining a lambda function instead, the problem is completely avoided. Scoping should prevent any issues
+            # in the event that variables exist with the same name as those used by the lambda function, but just in case
+            # I'm wrong about this I have also chosen unusual names for the temporariy variables.
+            #
+            # Note 3: The even smarter way to do this is to define this lambda function as a proper named function somewhere
+            # and have it included in the import process for torch that lambdify uses, and then just write source code here
+            # that calls it.
+            return "(lambda _u_, _x_: %s(_u_, _x_, grad_outputs=torch.ones_like(_u_), retain_graph=True, create_graph=True)[0])(%s, %s)" % (
                     self._module_format("torch.autograd.grad"),
-                    output_vals,
-                    self._print(args[-1]),
-                    output_vals,
+                    unfold(expr, args[:-1]),
+                    self._print(args[-1])
                 )
         return unfold(expr.expr, variables)
 
@@ -300,7 +310,7 @@ class Equation:
             modules=[
                 self.torch_default_mapping,
             ],
-            printer=ModifiedTorchPrinter(),
+            printer=ModifiedTorchPrinter()
         )
 
     # Evaluate the model at the given coordinates, pass the coordinates and variables into the equation expression, and output the result
