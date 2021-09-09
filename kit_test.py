@@ -85,6 +85,8 @@ print(diffeq_test.symbolic_expression)
 
 print(diffeq_test.f(coords_in))
 
+print(diffeq_test._eq_eval.__doc__)
+
 #
 # t_min = 0.
 # t_max = 1.
