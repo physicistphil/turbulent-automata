@@ -195,22 +195,29 @@ class Solution(torch.nn.Module, ABC):
         super(Solution, self).__init__()
         self.in_map = input_map
         self.out_map = output_map
-        self.setup_model(self.in_map.coords_out, self.out_map.vars_in)
+        self.parameters = self.setup_model(self.in_map.coords_out, self.out_map.vars_in)
+
+
 
     @abstractmethod
     def setup_model(
         self,
         model_inputs: Tuple[torch.Size, ...],
         model_outputs: Tuple[torch.Size, ...],
-    ) -> None:
+    ) -> Callable:
         """The setup routine for the central trainable model of the solution.
         Given a specification of the order and sizes of the tensors output by the in_map and expected by the out_map, a model should be constructed that connects to these inputs and outputs.
         This routine defines the architecture that represents the solution, so it is left unimplemented on this abstract base class, and can be overloaded in any subclass to define general PINN architectures.
+        This routine must also return a function that provides the set of trainable parameters to the optimizer. Typically this will be the .parameters property of any nn model used internally, and this
+        will be made available as the .parameters property of the Solution object itself, so that users can call .parameters() on the Solution to get the trainable parameters, as with normal pytorch models.
 
         :param model_inputs: The sizes of the collection of tensors that will be fed in to the model.
         :type model_inputs: tuple of torch.Size
         :param model_outputs: The sizes of the collection of tensors that the model is expected to produce.
-        :type model_outputs: tuple of torch.Size"""
+        :type model_outputs: tuple of torch.Size
+
+        :returns: A function that returns the parameters to be given to the optimizer. For typical pytorch nn's this is their .parameters property.
+        :rtype: A function returning... whatever .parameters() returns."""
         raise NotImplementedError
 
     def forward(self, coords: SymbolValues) -> SymbolValues:
@@ -378,6 +385,8 @@ class ClassicPINN(Solution):
             return torch.split(u(input_vect), output_sizes, dim=1)
 
         self.model = nn_eval
+
+        return u.parameters
 
 
 def ColocationLoss(
