@@ -34,38 +34,7 @@ print(model)
 
 print(model(coords_in))
 
-
-def f(coord_input):
-    x = coord_input["x"]
-    t = coord_input["t"]
-    t.requires_grad = True  # Tell autograd to include t
-    x.requires_grad = True  # Tell autograd to include x
-    u_val = model({"x": x, "t": t})["u"]
-    u_x = torch.autograd.grad(
-        u_val,
-        x,
-        retain_graph=True,
-        create_graph=True,
-        grad_outputs=torch.ones_like(u_val),
-    )[0]
-    u_t = torch.autograd.grad(
-        u_val,
-        t,
-        retain_graph=True,
-        create_graph=True,
-        grad_outputs=torch.ones_like(u_val),
-    )[0]
-    u_xx = torch.autograd.grad(
-        u_x, x, retain_graph=True, create_graph=True, grad_outputs=torch.ones_like(u_x)
-    )[0]
-    # Might need to add some more arguments if u isn't scalar...
-    return u_t + u_val * u_x - (0.01 / 3.14) * u_xx
-
-print(ColocationLoss(f, coords_in, torch.ones_like(coords_in["x"])))
-
 x_sym, t_sym, u_sym = sp.symbols("x t u")
-
-# burgers = Equation(model, sp.deriv(u_sym, t_sym) + u*sp.deriv(u_sym, x_sym) - (0.01/3.14)*sp.deriv(u_sym, x_sym, 2))
 
 algebraic_test = Equation(model, u_sym - sp.sin(x_sym) * sp.cos(t_sym))
 
@@ -76,7 +45,7 @@ print(algebraic_test.symbolic_expression)
 print(algebraic_test.f(coords_in))
 
 diffeq_test = Equation(
-    model, sp.Derivative(u_sym, x_sym, 2) + sp.Derivative(u_sym, t_sym)
+    model, sp.Derivative(u_sym, t_sym) + u_sym * sp.Derivative(u_sym, x_sym) - (0.01 / 3.14) * sp.Derivative(u_sym, x_sym, 2)
 )
 
 print(diffeq_test)
@@ -86,6 +55,8 @@ print(diffeq_test.symbolic_expression)
 print(diffeq_test.f(coords_in))
 
 print(diffeq_test._eq_eval.__doc__)
+
+print(ColocationLoss(diffeq_test.f, coords_in, torch.ones_like(coords_in["x"])))
 
 #
 # t_min = 0.

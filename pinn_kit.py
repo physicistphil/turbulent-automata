@@ -241,24 +241,20 @@ class ModifiedTorchPrinter(torch_printer.TorchPrinter):
             # into the appropriate set of calls to torch.autograd.grad. Alternatively, it might be wiser to give each
             # tensor component a string name, so that the index manipulation can be taken care of by sympy, since we're
             # not going to have more than a handful of components anyway. This is effectively what I'll do for now.
-            #
-            # Note 2: The lambda function is important for efficiency: if we just insert the result of unfold into the
-            # string twice, the code that gets evaluated ends up re-calculating the whole expression tree over again
-            # just to produce the ones_like array. Because this happens at each level of the tree, it is actually an
-            # astoundingly effective way to explode expression complexity for 2nd order and higher derivatives. By
-            # defining a lambda function instead, the problem is completely avoided. Scoping should prevent any issues
-            # in the event that variables exist with the same name as those used by the lambda function, but just in case
-            # I'm wrong about this I have also chosen unusual names for the temporariy variables.
-            #
-            # Note 3: The even smarter way to do this is to define this lambda function as a proper named function somewhere
-            # and have it included in the import process for torch that lambdify uses, and then just write source code here
-            # that calls it.
-            return "(lambda _u_, _x_: %s(_u_, _x_, grad_outputs=torch.ones_like(_u_), retain_graph=True, create_graph=True)[0])(%s, %s)" % (
-                    self._module_format("torch.autograd.grad"),
+            return "standard_grad(%s, %s)" % (
                     unfold(expr, args[:-1]),
                     self._print(args[-1])
                 )
         return unfold(expr.expr, variables)
+
+# Convenience function for getting gradients for a set of model evaluations with respect to a corresponding set of inputs.
+# This convenience function is crucial for the lambdification of Derivative: since torch.autograd.grad requires the output,
+# input, *and* a grad_output tensor of the same size as the output, printing this call directly with the code printer
+# would require the expression being differentiated to be calculated twice, at each level of the recursion. Even for
+# relatively low order derivatives, this is really inefficient, but defining and calling a convenience function
+# completely fixes the issue.
+def standard_grad(_u_, _x_):
+    return torch.autograd.grad(_u_, _x_, grad_outputs=torch.ones_like(_u_), retain_graph=True, create_graph=True)[0]
 
 
 class Equation:
@@ -290,6 +286,7 @@ class Equation:
     # Apply translations. Keys should be sympy names of functions, values should be the torch names
     for sympyname, translation in torch_translations.items():
         torch_default_mapping[sympyname] = torch_default_mapping[translation]
+    torch_default_mapping["standard_grad"] = standard_grad
 
     def __init__(self, solution: Solution, equation: sp.Expr) -> None:
         """Constructor.
