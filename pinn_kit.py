@@ -183,19 +183,23 @@ class Solution(torch.nn.Module, ABC):
     :ivar in_map: A map from the named coordinates to the model input tensors.
     :type in_map: InputRemap
     :ivar out_map: A map from the model output tensors to the named output variable tensors.
-    :type out_map: OutputRemap"""
+    :type out_map: OutputRemap
+    :ivar device: A string representing which device to run on. 'cpu', 'cuda', or 'cuda:x', x is the GPU ID
+    :type str"""
 
-    def __init__(self, input_map: InputRemap, output_map: OutputRemap) -> None:
+    def __init__(self, input_map: InputRemap, output_map: OutputRemap, device: str = 'cpu') -> None:
         """Constructor.
 
         :param input_map: A map from the named coordinates to the model input tensors.
         :type input_map: InputRemap
         :param output_map: A map from the model output tensors to the named output variable tensors.
-        :type output_map: OutputRemap"""
+        :type output_map: OutputRemap
+        :param device: A string representing which device to run on. 'cpu', 'cuda', or 'cuda:x', x is the GPU ID
+        :type device: str"""
         super(Solution, self).__init__()
         self.in_map = input_map
         self.out_map = output_map
-        self.parameters = self.setup_model(self.in_map.coords_out, self.out_map.vars_in)
+        self.parameters = self.setup_model(self.in_map.coords_out, self.out_map.vars_in, device)
 
 
 
@@ -344,7 +348,8 @@ class Equation:
 
 
 class ClassicPINN(Solution):
-    def setup_model(self, model_inputs, model_outputs):
+    # The 'device' paramter can be 'cpu' or 'cuda', or a specific GPU like 'cuda:0' or 'cuda:2'
+    def setup_model(self, model_inputs, model_outputs, device='cpu'):
         input_size = sum(size[0] for size in model_inputs)
         output_sizes = [size[0] for size in model_outputs]
         output_size = sum(output_sizes)
@@ -378,7 +383,7 @@ class ClassicPINN(Solution):
             nn.Linear(32, 16),
             nn.Tanh(),
             nn.Linear(16, output_size),
-        )
+        ).to(device)
 
         def nn_eval(coords):
             input_vect = torch.cat(coords, 1)
