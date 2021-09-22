@@ -18,7 +18,7 @@ from sympy.core.compatibility import Iterable
 
 
 import typing
-from typing import Dict, Tuple, Callable
+from typing import Dict, Tuple, Callable, Union
 
 from abc import ABC, abstractmethod
 
@@ -187,7 +187,9 @@ class Solution(torch.nn.Module, ABC):
     :ivar device: A string representing which device to run on. 'cpu', 'cuda', or 'cuda:x', x is the GPU ID
     :type str"""
 
-    def __init__(self, input_map: InputRemap, output_map: OutputRemap, device: str = 'cpu') -> None:
+    def __init__(
+        self, input_map: InputRemap, output_map: OutputRemap, device: str = "cpu"
+    ) -> None:
         """Constructor.
 
         :param input_map: A map from the named coordinates to the model input tensors.
@@ -199,9 +201,9 @@ class Solution(torch.nn.Module, ABC):
         super(Solution, self).__init__()
         self.in_map = input_map
         self.out_map = output_map
-        self.parameters = self.setup_model(self.in_map.coords_out, self.out_map.vars_in, device)
-
-
+        self.parameters = self.setup_model(
+            self.in_map.coords_out, self.out_map.vars_in, device
+        )
 
     @abstractmethod
     def setup_model(
@@ -236,6 +238,7 @@ class Solution(torch.nn.Module, ABC):
         model_output = self.model(model_input)
         return self.out_map(coords, model_output)
 
+
 # Since I want to be able to use the native support for pytorch once it is added to
 # sympy, I'm making a subclass of TorchPrinter rather than modifying it directly.
 # This way, when native support is added, this code can be used with it.
@@ -243,7 +246,10 @@ class ModifiedTorchPrinter(torch_printer.TorchPrinter):
     def _print_Derivative(self, expr):
         variables = expr.variables
         if any(isinstance(i, Iterable) for i in variables):
-            raise NotImplementedError("derivation by multiple variables is not supported")
+            raise NotImplementedError(
+                "derivation by multiple variables is not supported"
+            )
+
         def unfold(expr, args):
             if not args:
                 return self._print(expr)
@@ -253,10 +259,12 @@ class ModifiedTorchPrinter(torch_printer.TorchPrinter):
             # tensor component a string name, so that the index manipulation can be taken care of by sympy, since we're
             # not going to have more than a handful of components anyway. This is effectively what I'll do for now.
             return "standard_grad(%s, %s)" % (
-                    unfold(expr, args[:-1]),
-                    self._print(args[-1])
-                )
+                unfold(expr, args[:-1]),
+                self._print(args[-1]),
+            )
+
         return unfold(expr.expr, variables)
+
 
 # Convenience function for getting gradients for a set of model evaluations with respect to a corresponding set of inputs.
 # This convenience function is crucial for the lambdification of Derivative: since torch.autograd.grad requires the output,
@@ -265,16 +273,115 @@ class ModifiedTorchPrinter(torch_printer.TorchPrinter):
 # relatively low order derivatives, this is really inefficient, but defining and calling a convenience function
 # completely fixes the issue.
 def standard_grad(_u_, _x_):
-    return torch.autograd.grad(_u_, _x_, grad_outputs=torch.ones_like(_u_), retain_graph=True, create_graph=True)[0]
+    return torch.autograd.grad(
+        _u_,
+        _x_,
+        grad_outputs=torch.ones_like(_u_),
+        retain_graph=True,
+        create_graph=True,
+        allow_unused=True
+    )[0]
+
+
+# Define a dictionary of torch functions indexed by the corresponding sympy type.
+# The derivative ones in particular may need to be custom implementations using autograd
+# Note: there is a nearly completed PR in sympy where native support for torch has been implemented.
+# as soon as that becomes part of sympy proper, it would make sense to update this project to use that
+# feature, and reduce the dictionary here to custom translations
+torch_default_mapping = (
+    {}
+)  # This can contain special mappings not included in the module map
+exec("import torch", {}, torch_default_mapping)
+torch_translations = (
+    {}
+)  # For special translations where the function name is different in sympy and torch
+# Apply translations. Keys should be sympy names of functions, values should be the torch names
+for sympyname, translation in torch_translations.items():
+    torch_default_mapping[sympyname] = torch_default_mapping[translation]
+torch_default_mapping["standard_grad"] = standard_grad
+
+
+class Expression:
+    """This class represents mathematical expressions. Expressions generalize the notion of a mapping from
+    collections of named tensor batches to a single output tensor batch. They can be defined by providing a set of
+    symbol definitions (the name and type of tensor for each symbol), and then either providing a function that
+    directly performs this mapping, or by providing a sympy expression from which such a function will be
+    automatically generated.
+    This class is used by Equation to represent both equations and their subexpressions. In addition to potentially
+    making computations more efficient and code more legible and bug-proof, it puts user-written pytorch code on
+    equal footing with code generated from sympy expressions by lambdify, so that they can be used in concert,
+    preserving the best of sympy functionality while allowing easy support for things sympy doesn't do well (like
+    tensor operations), or for things that don't translate from sympy with maximal efficiency (like computing the
+    vector-Jacobian product with a single call to autograd rather than the many it would take with the naive
+    translation from sympy). Hopefully this reduces dependence on sympy, as well as on refining and adding features
+    to the sympy-to-pytorch translation system.
+
+    :ivar symbols: A set of symbol definitions that specify the names and shapes of the tensors that make up the expression.
+    :type symbols: A dict of symbol names, torch.Size objects
+    :ivar symbolic_expression: A symbolic representation of this expression. None if this expression is function-defined.
+    :type symbolic_expression: A sympy Expr object, or None
+    :ivar output_size: The shape of the output tensor.
+    :type output_size: torch.Size"""
+
+    def __init__(self, symbols: SymbolDefs, expr: Union[sp.Expr, Callable], output_size: torch.Size = torch.Size((1,))) -> None:
+        """Constructor.
+
+        :param symbols: A set of symbol definitions that specify the names and shapes of the tensors that make up the expression.
+        :type symbols: A dict of symbol names, torch.Size objects
+        :param expr: A sympy expression containing only the tensors named in symbols (and know constants), or a function accepting a dictionary of tensors with names and shapes defined in symbols, and outputing a tensor.
+        :type expr: A sympy Expr object, or a function
+        :param output_size: The shape of the tensor defined by expr.
+        :type output_size: torch.Size"""
+        self.symbols = symbols
+        if isinstance(expr, sp.Basic):
+            self.symbolic_expression = expr
+            self._symbs = sorted(list(self.symbols.keys()))
+            # Use the custom pytorch printer with sympy's lambdify to generate an expression function
+            lambdify_function = sp.lambdify(
+                [
+                    list(map(sp.Symbol, self._symbs)),
+                ],
+                self.symbolic_expression,
+                modules=[
+                    torch_default_mapping,
+                ],
+                printer=ModifiedTorchPrinter(),
+            )
+            self._exp_eval = lambda syms: lambdify_function(
+                [syms[name] for name in self._symbs]
+            )
+        else:
+            self.symbolic_expression = None
+            self._exp_eval = expr
+        # Unfortunately, there is no way to compute the output shape from the
+        # _exp_eval function, because this function may take gradients of one
+        # symbol with respect to another. Without knowing the right dependency
+        # relationship for the symbols, we can't correctly call _exp_eval, since,
+        # for example, autograd.grad returns an error or a None object when a
+        # tensor is differentiated with respect to a tensor it does not depend on.
+        # Since the relationship between variables may be established in other
+        # expressions, there is no way to determine the correct relationship here,
+        # and it would be more inconvenient for the user to specify that relationship
+        # than to simply specify the shape of the output, which they should know
+        # anyway.
+        self.output_size = output_size
+
+    def __call__(self, symbols: SymbolValues) -> torch.tensor:
+        """Evaluate the expression for the given set of symbol values.
+
+        :param symbols: A set of named symbol values. This must include a tensor
+            for every symbol used by this expression. Input containing additional
+            symbols not used by the expression is also accepted: the extra tensors
+            will simply be ignored.
+        :type symbols: A dict of torch.tensor
+
+        :returns: A torch tensor resulting from the expression evaluation with the given arguments.
+        :rtype: torch.tensor"""
+        return self._exp_eval(symbols)
 
 
 class Equation:
     """This class represents equations. Every equation has a symbolic form and a Solution to which it applies.
-    Perhapse confusingly, in this case the 'solution' may not actually solve the equation, but it should after
-    training if the solution was sufficiently trained using the provided f() function.
-    The function f() takes in coordinate values, evaluates the solution on them to get variable values, and
-    uses these tensors and their derivatives to evaluate the sum of all terms of the equation. When the equation
-    is satisfied, all the components of this sum should be zero, but the exact manner by which this is enforced is
     left up to the training and loss functions that call f().
 
     :ivar solution: The solution function that should, after training, satisfy this equation.
@@ -282,44 +389,56 @@ class Equation:
     :ivar symbolic_expression: The sum of all terms in the equation, which should equal zero when satisfied.
     :type symbolic_expression: A sympy Expr object"""
 
-    # Define a dictionary of torch functions indexed by the corresponding sympy type.
-    # The derivative ones in particular may need to be custom implementations using autograd
-    # Note: there is a nearly completed PR in sympy where native support for torch has been implemented.
-    # as soon as that becomes part of sympy proper, it would make sense to update this project to use that
-    # feature, and reduce the dictionary here to custom translations
-    torch_default_mapping = (
-        {}
-    )  # This can contain special mappings not included in the module map
-    exec("import torch", {}, torch_default_mapping)
-    torch_translations = (
-        {}
-    )  # For special translations where the function name is different in sympy and torch
-    # Apply translations. Keys should be sympy names of functions, values should be the torch names
-    for sympyname, translation in torch_translations.items():
-        torch_default_mapping[sympyname] = torch_default_mapping[translation]
-    torch_default_mapping["standard_grad"] = standard_grad
-
-    def __init__(self, solution: Solution, equation: sp.Expr) -> None:
+    def __init__(
+        self,
+        solution: Solution,
+        equation: Union[sp.Expr, Expression],
+        subexpressions: list[Tuple[str, Expression]] = [],
+    ) -> None:
         """Constructor.
 
         :param solution: A trainable solution model. Its named inputs and outputs must include all variables used in this equation.
         :type solution: A subclass of Solution
-        :param equation: A symbolic expression of the sum of all terms in the equation. Variable symbol names must match those used by the solution.
-        :type equation: A sympy Expr object"""
+        :param equation: A symbolic expression of the sum of all terms in the equation. Variable symbol names must match
+            those used by the solution.
+        :type equation: A sympy Expr object
+        :key subexpressions: Optional. A list of (name, expression) pairs.
+            In analogy to the sympy .subs() command, the first expressions in the list are "substituted"
+            first, so they may contain subexpressions defined later in the list. The last subexpression
+            in the list must only depend on the coordinates and solution output variables.
+            Note that this means the expressions are actually evaluated in reverse order, starting at the
+            end of the list and going backward.
+        :type subexpressions: A list of (string, Expressions) tuples, assumed empty if not provided."""
         self.solution = solution
-        self.symbolic_expression = equation
         # Pull the coordinates and variables out of solution
-        self._coords = self.solution.in_map.coords_in.keys()
-        self._variables = self.solution.out_map.vars_out.keys()
+        # It's important that they be sorted in an unambiguous way, since lambdify matches symbols to arguments by order. However, it doesn't matter *how* they are sorted.
+        coords_in = self.solution.in_map.coords_in
+        vars_out = self.solution.out_map.vars_out
+        self._coords = sorted(list(coords_in.keys()))
+        self._variables = sorted(list(vars_out.keys()))
         # To-do: we should check that the variables in the equation are all accounted for by the coordinates and variables in the solution, otherwise we'll get a confusing error.
-        self._eq_eval = sp.lambdify(
-            (list(map(sp.Symbol, self._coords)), list(map(sp.Symbol, self._variables))),
-            self.symbolic_expression,
-            modules=[
-                self.torch_default_mapping,
-            ],
-            printer=ModifiedTorchPrinter()
-        )
+        self.subexpressions = subexpressions
+        self._subs = {}
+        self._sub_vals = {}
+        for name, expr in reversed(self.subexpressions):
+            # To-do: add some subexpression list sanity checking here
+            self._subs[name] = expr.output_size
+            self._sub_vals[
+                name
+            ] = None  # Might speed things up slightly to add all keys first?
+
+        if isinstance(equation, sp.Expr):
+            self.symbolic_expression = equation
+            self.expression = Expression(
+                {**coords_in, **vars_out, **self._subs}, equation, (1,)
+            )
+            # The output_size is (1,) because only scalar sympy expressions can be
+            # flawlessly translated into pytorch code at present. If it ever becomes
+            # useful to do so, array sympy expressions can be supported and have their
+            # size information extracted to fill the output_size argument.
+        else:
+            self.symbolic_expression = None
+            self.expression = equation
 
     # Evaluate the model at the given coordinates, pass the coordinates and variables into the equation expression, and output the result
     def f(self, coords: SymbolValues) -> torch.tensor:
@@ -333,10 +452,10 @@ class Equation:
         for coord in coords.values():
             coord.requires_grad = True
         variables = self.solution(coords)
-        return self._eq_eval(
-            [coords[name] for name in self._coords],
-            [variables[name] for name in self._variables],
-        )
+        # Evaluate the subexpressions from last to first
+        for name, expr in reversed(self.subexpressions):
+            self._sub_vals[name] = expr({**coords, **variables, **self._sub_vals})
+        return self.expression({**coords, **variables, **self._sub_vals})
 
 
 # To-do: implement an 'Action' class in the vein of Equation that evaluates a lagrangian density. Unlike for equations, re-weighting the lagrangain messes up the physics, so the Action class should also be in charge of integration, and can implement an array of integration methods, certainly monte carlo, but also methods that assume structured samples and/or take advantage of access to derivatives or repeated model evaluations. Note: for theories like GR the Action class should be set up to output L * sqrt(-g), so the module may just assume a standard coordinate volume element for everything.
@@ -349,7 +468,7 @@ class Equation:
 
 class ClassicPINN(Solution):
     # The 'device' paramter can be 'cpu' or 'cuda', or a specific GPU like 'cuda:0' or 'cuda:2'
-    def setup_model(self, model_inputs, model_outputs, device='cpu'):
+    def setup_model(self, model_inputs, model_outputs, device="cpu"):
         input_size = sum(size[0] for size in model_inputs)
         output_sizes = [size[0] for size in model_outputs]
         output_size = sum(output_sizes)

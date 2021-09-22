@@ -45,7 +45,7 @@ print(algebraic_test.symbolic_expression)
 print(algebraic_test.f(coords_in))
 
 diffeq_test = Equation(
-    model, sp.Derivative(u_sym, t_sym) + u_sym * sp.Derivative(u_sym, x_sym) - (0.01 / 3.14) * sp.Derivative(u_sym, x_sym, 2)
+    model, sp.Derivative(u_sym, t_sym) + u_sym * sp.Derivative(u_sym, x_sym) - (sp.S(1)/31) * sp.Derivative(u_sym, x_sym, 2)
 )
 
 print(diffeq_test)
@@ -54,90 +54,46 @@ print(diffeq_test.symbolic_expression)
 
 print(diffeq_test.f(coords_in))
 
-print(diffeq_test._eq_eval.__doc__)
-
 print(ColocationLoss(diffeq_test.f, coords_in, torch.ones_like(coords_in["x"])))
 
-#
-# t_min = 0.
-# t_max = 1.
-# x_min = -1.
-# x_max = 1.
-#
-# def u_0(x):
-#    return -torch.sin(np.pi*((2.*(x-x_min)/(x_max-x_min))-1.))
-#
-# def initial_points(N_x):
-#    x_samp = torch.linspace(x_min, x_max, N_x).reshape(-1, 1)
-#    return torch.cat((torch.zeros_like(x_samp), x_samp), 1)
-#
-# def boundary_points(N_t):
-#    t_samp = torch.linspace(t_min, t_max, N_t).reshape(-1, 1)
-#    left_bound = torch.cat((t_samp, torch.ones_like(t_samp)*x_min), 1)
-#    right_bound = torch.cat((t_samp, torch.ones_like(t_samp)*x_max), 1)
-#    return left_bound, right_bound
-#
-# def bulk_points(N_bulk):
-#    lower_bound = np.array([t_min, x_min], dtype='float32')
-#    upper_bound = np.array([t_max, x_max], dtype='float32')
-#    bulk_samples = lower_bound + (upper_bound - lower_bound)*lhs(2, N_bulk).astype('float32')
-#    return torch.from_numpy(bulk_samples)
-#
-# def initial_loss(initial_points):
-#    x_points = torch.split(initial_points, 1, dim=1)[1]
-#    return torch.mean(torch.square(u(initial_points) - u_0(x_points)))
-#
-# def boundary_loss(left_bound, right_bound):
-#    #return torch.mean(torch.square(u(left_bound) - u(right_bound)))
-#    return torch.mean(torch.square(u(left_bound)) + torch.square(u(right_bound)))
-#
-# def bulk_loss(bulk_samples):
-#    return torch.mean(torch.square(f(*torch.split(bulk_samples, 1, dim=1))))
-#
-# optimizer = torch.optim.AdamW(u.parameters(), lr = 3e-4)
-#
-## For now, every call to PINN_Loss() creates a new batch, so there's no need
-## to talk about epochs vs. batches. Might not be optimal, I'm not sure.
-#
-#
-# initial = initial_points(100)
-# left, right = boundary_points(100)
-# bulk = bulk_points(10000)
-#
-# start_time = time.time()
-# for steps in range(1, 1500):
-#    loss = 100*initial_loss(initial) + 10*boundary_loss(left, right)
-#    optimizer.zero_grad()
-#    loss.backward()
-#    optimizer.step()
-#    #if steps % 10 == 0:
-#    #    print(f"Loss {loss.item()}")
-#
-# for steps in range(1, 100):
-#    loss = 100*initial_loss(initial) + 10*boundary_loss(left, right) + bulk_loss(bulk)
-#    optimizer.zero_grad()
-#    loss.backward()
-#    optimizer.step()
-#    #if steps % 10 == 0:
-#    #    print(f"Loss {loss.item()}")
-#
-# end_time = time.time()
-#
-# print(end_time - start_time)
-#
-# x_vals = torch.linspace(x_min, x_max, 100).reshape(-1, 1)
-# t_vals_1 = torch.zeros_like(x_vals)
-# plot_points_1 = torch.cat((t_vals_1, x_vals), 1)
-# u_vals_1 = u(plot_points_1)
-# plt.plot(x_vals, u_0(x_vals), label=r"$u_0$")
-# plt.plot(x_vals, u_vals_1.detach().numpy(), label=r"NN, $t=0$")
-# t_vals_2 = torch.ones_like(x_vals)*0.4
-# plot_points_2 = torch.cat((t_vals_2, x_vals), 1)
-# u_vals_2 = u(plot_points_2)
-# plt.plot(x_vals, u_vals_2.detach().numpy(), label=r"NN, $t=0.4$")
-# t_vals_3 = torch.ones_like(x_vals)*0.7
-# plot_points_3 = torch.cat((t_vals_3, x_vals), 1)
-# u_vals_3 = u(plot_points_3)
-# plt.plot(x_vals, u_vals_3.detach().numpy(), label=r"NN, $t=0.7$")
-# plt.legend()
-# plt.show()
+expr1 = Expression({**coords, "u": (1,)}, u_sym - sp.sin(x_sym) * sp.cos(t_sym))
+
+print(expr1)
+
+print(expr1.symbols)
+print(expr1.symbolic_expression)
+print(expr1({**coords_in, **model(coords_in)}))
+
+expr2 = Expression({**coords, "u": (1,)}, diffeq_test.symbolic_expression)
+
+print(expr2)
+
+print(expr2.symbols)
+print(expr2.symbolic_expression)
+print(expr2({**coords_in, **model(coords_in)}))
+
+print(expr2({**coords_in, **model(coords_in)}) == diffeq_test.f(coords_in))
+
+expr3 = Expression(coords, diffeq_test.f)
+
+print(expr3)
+
+print(expr3.symbols)
+print(expr3.symbolic_expression)
+print(expr3(coords_in))
+
+print(expr2({**coords_in, **model(coords_in)}) == expr3(coords_in))
+
+
+beta_sym, U_sym, T_sym = sp.symbols(r"\beta U T")
+sub_exp = Expression({**coords, U_sym.name: (1,)}, (sp.S(1)/31) * sp.Derivative(U_sym, x_sym, 2))
+sub_exp_u = Expression({u_sym.name: (1,)}, lambda syms: syms[u_sym.name], (1,))
+sub_exp_t = Expression({t_sym.name: (1,)}, lambda syms: syms[t_sym.name], (1,))
+sub_exp_test = Equation(model, sp.Derivative(U_sym, T_sym) + U_sym * sp.Derivative(U_sym, x_sym) - beta_sym, [(beta_sym.name, sub_exp), (U_sym.name, sub_exp_u), (T_sym.name, sub_exp_t)])
+
+print(sub_exp_test)
+print(sub_exp_test.f(coords_in))
+print(sub_exp_test.symbolic_expression)
+print(diffeq_test.symbolic_expression)
+
+print(sub_exp_test.f(coords_in) - diffeq_test.f(coords_in))
