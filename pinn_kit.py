@@ -279,7 +279,7 @@ def standard_grad(_u_, _x_):
         grad_outputs=torch.ones_like(_u_),
         retain_graph=True,
         create_graph=True,
-        allow_unused=True
+        allow_unused=True,
     )[0]
 
 
@@ -323,7 +323,12 @@ class Expression:
     :ivar output_size: The shape of the output tensor.
     :type output_size: torch.Size"""
 
-    def __init__(self, symbols: SymbolDefs, expr: Union[sp.Expr, Callable], output_size: torch.Size = torch.Size((1,))) -> None:
+    def __init__(
+        self,
+        symbols: SymbolDefs,
+        expr: Union[sp.Expr, Callable],
+        output_size: torch.Size = torch.Size((1,)),
+    ) -> None:
         """Constructor.
 
         :param symbols: A set of symbol definitions that specify the names and shapes of the tensors that make up the expression.
